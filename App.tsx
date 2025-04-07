@@ -1,17 +1,26 @@
-import { Button, StyleSheet, Text, View } from "react-native";
+import {
+  Button,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  StatusBar as RNStatusBar,
+  TouchableOpacity,
+} from "react-native";
 import { Audio } from "expo-av";
 import Slider from "@react-native-community/slider";
 import { useEffect, useRef, useState } from "react";
+import { StatusBar } from "expo-status-bar";
+import { Entypo } from "@expo/vector-icons";
 
 export default function App() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordedUri, setRecordedUri] = useState<string[]>([]);
+  const [playbackStates, setPlaybackStates] = useState<
+    { position: number; duration: number; isPlaying: boolean }[]
+  >([]);
   const [isRecording, setIsRecording] = useState<boolean>(false);
-
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
-  const [position, setPosition] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
 
   const sound = useRef<Audio.Sound | null>(null);
 
@@ -38,19 +47,33 @@ export default function App() {
     setIsRecording(false);
     await recording.stopAndUnloadAsync();
     const uri = recording.getURI();
-    setRecordedUri([...recordedUri, uri ? uri : ""]);
+    if (uri) {
+      setRecordedUri((prev) => [...prev, uri]);
+      setPlaybackStates((prev) => [
+        ...prev,
+        { position: 0, duration: 1, isPlaying: false },
+      ]);
+    }
     setRecording(null);
   };
 
-  const onPlaybackStatusUpdate = (status: any) => {
+  const onPlaybackStatusUpdate = (status: any, index: number) => {
     if (status.isLoaded) {
-      setPosition(status.positionMillis);
-      setDuration(status.durationMillis);
-      setIsPlaying(status.isPlaying);
+      setPlaybackStates((prev) => {
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          position: status.positionMillis,
+          duration: status.durationMillis || 1,
+          isPlaying: status.isPlaying,
+        };
+        return updated;
+      });
     }
   };
 
   const playSound = async (vnUri: string, index: number) => {
+    // Stop previous playback if needed
     if (sound.current) {
       await sound.current.unloadAsync();
       sound.current.setOnPlaybackStatusUpdate(null);
@@ -60,7 +83,7 @@ export default function App() {
     const { sound: newSound } = await Audio.Sound.createAsync(
       { uri: vnUri },
       { shouldPlay: true },
-      onPlaybackStatusUpdate
+      (status) => onPlaybackStatusUpdate(status, index)
     );
 
     sound.current = newSound;
@@ -100,48 +123,76 @@ export default function App() {
   }, []);
 
   return (
-    <View style={{ padding: 20 }}>
+    <View
+      style={{
+        paddingTop: Platform.OS === "ios" ? 50 : RNStatusBar.currentHeight,
+        paddingHorizontal: 15,
+      }}>
+      <StatusBar style='auto' />
       <Button
         title={isRecording ? "Stop Recording" : "Start Recording"}
         onPress={isRecording ? stopRecording : startRecording}
       />
 
-      {recordedUri.map((item, index) => (
-        <View style={styles.audioBox} key={index}>
-          <Text style={styles.label}>Voice note {index + 1}</Text>
-          <Button title='Play' onPress={() => playSound(item, index)} />
+      <View style={styles.audioBoxContainer}>
+        {recordedUri.map((item, index) => {
+          const state = playbackStates[index] || {
+            position: 0,
+            duration: 1,
+            isPlaying: false,
+          };
 
-          {currentIndex === index && (
-            <>
-              <Slider
-                style={styles.slider}
-                minimumValue={0}
-                maximumValue={duration}
-                value={position}
-                onSlidingComplete={handleSeek}
-                minimumTrackTintColor='#1FB28A'
-                maximumTrackTintColor='#ccc'
-                thumbTintColor='#1FB28A'
-              />
+          return (
+            <View key={index} style={styles.audioBox}>
+              <Text style={styles.label}>Voice note {index + 1}</Text>
+              <View style={styles.vnActions}>
+                <TouchableOpacity onPress={() => playSound(item, index)}>
+                  <Entypo
+                    name={
+                      state.isPlaying ? "controller-paus" : "controller-play"
+                    }
+                    size={25}
+                    color={"blue"}
+                  />
+                </TouchableOpacity>
 
-              <View style={styles.timerRow}>
-                <Text>{formatMillis(position)}</Text>
-                <Text>{formatMillis(duration)}</Text>
+                <View style={styles.sliderAndDurationContainer}>
+                  <Text>{formatMillis(state.position)}</Text>
+                  <View style={{ width: "65%" }}>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={state.duration}
+                      value={state.position}
+                      onSlidingComplete={handleSeek}
+                      minimumTrackTintColor='#1FB28A'
+                      maximumTrackTintColor='#c8bebe'
+                      thumbTintColor='#1FB28A'
+                    />
+                  </View>
+                  <Text>{formatMillis(state.duration)}</Text>
+                </View>
               </View>
-            </>
-          )}
-        </View>
-      ))}
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  audioBoxContainer: {
+    width: "100%",
+    alignItems: "flex-end",
+    marginVertical: 10,
+    gap: 10,
+  },
   audioBox: {
-    marginTop: 20,
     padding: 10,
-    backgroundColor: "#f2f2f2",
     borderRadius: 10,
+    width: "80%",
+    backgroundColor: "#f2f2f2",
   },
   label: {
     fontSize: 16,
@@ -149,12 +200,16 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   slider: {
-    marginTop: 10,
     width: "100%",
     height: 40,
   },
-  timerRow: {
+  sliderAndDurationContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 5,
+  },
+  vnActions: {
+    flexDirection: "row",
+    alignItems: "center",
   },
 });
